@@ -31,6 +31,19 @@ class AndroidRuntimeTests(unittest.TestCase):
             runtime.write_bytes(elf())
             verify_runtime({'libTriAevum.so': host, 'libc++_shared.so': runtime})
 
+    def test_32_bit_libraries_are_checked_like_64_bit_ones(self):
+        required = ('__cxa_init_primary_exception',)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            host, runtime = root / 'host.so', root / 'runtime.so'
+            host.write_bytes(elf(imports=required, wide=False))
+            runtime.write_bytes(elf(wide=False))
+            libraries = {'libTriAevum.so': host, 'libc++_shared.so': runtime}
+            with self.assertRaisesRegex(ValueError, '__cxa_init_primary_exception'):
+                verify_runtime(libraries)
+            runtime.write_bytes(elf(exports=required, wide=False))
+            verify_runtime(libraries)
+
     def test_non_elf_input_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'bad.so'

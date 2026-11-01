@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import xml.etree.ElementTree as ET
+from android_abi import ABIS, DEFAULT_ABI, abi_settings
 
 
 def replace(path, before, after):
@@ -17,7 +18,8 @@ def replace(path, before, after):
     path.write_text(source.replace(before, after))
 
 
-def prepare(engine, private_kit=None, preparation_native_stage=None):
+def prepare(engine, private_kit=None, preparation_native_stage=None, abi=DEFAULT_ABI):
+    abi_settings(abi)
     root = Path(engine) / 'ports/android'
     shutil.copytree(Path(__file__).parent/'android/drawable',root/'app/src/main/res/drawable',dirs_exist_ok=True)
     notices=root/'app/src/main/assets/licenses'
@@ -220,12 +222,21 @@ tasks.named("preBuild") { dependsOn("stampPreparationIdentity") }
         'numpy-2.3.2-1-cp313-cp313-android_24_arm64_v8a.whl'
         '#sha256=f7beb51f8d162c110ee8d4c9e275f490ce39dddba919643d949687bb4286bedd')
     python_config = 'chaquopy { defaultConfig { version = "3.13"; pip { install("' + numpy_url + '") } } }'
+    if abi != DEFAULT_ABI:
+        # The pinned wheel and its hash are arm64-only. Let Chaquopy resolve the
+        # matching wheel for the selected ABI; pin its hash once one is verified.
+        python_config = 'chaquopy { defaultConfig { version = "3.13"; pip { install("numpy==2.3.2") } } }'
     text = gradle.read_text()
     previous = 'chaquopy { defaultConfig { version = "3.12" } }'
+    arm64_config = 'chaquopy { defaultConfig { version = "3.13"; pip { install("' + numpy_url + '") } } }'
     if previous in text:
         gradle.write_text(text.replace(previous, python_config))
+    elif arm64_config in text and python_config != arm64_config:
+        gradle.write_text(text.replace(arm64_config, python_config))
     elif python_config not in text:
         raise ValueError('Android model-import dependency context changed')
+    if abi != DEFAULT_ABI:
+        gradle.write_text(gradle.read_text().replace(DEFAULT_ABI, abi))
 
     if private_kit is not None:
         private_kit = Path(private_kit).resolve()
@@ -242,7 +253,7 @@ tasks.named("preBuild") { dependsOn("stampPreparationIdentity") }
 
     if preparation_native_stage is not None:
         from preparation_identity import stamp_android
-        stamp_android(asset, root/'app/src/main/jniLibs/arm64-v8a', Path(preparation_native_stage)/'arm64-v8a')
+        stamp_android(asset, root/'app/src/main/jniLibs'/abi, Path(preparation_native_stage)/abi)
 
     from apply_android_startup import apply as apply_startup
     apply_startup(engine)
@@ -254,5 +265,6 @@ if __name__ == '__main__':
     parser.add_argument('engine', type=Path)
     parser.add_argument('--private-preparation-kit', type=Path)
     parser.add_argument('--preparation-native-stage', type=Path)
+    parser.add_argument('--abi', choices=sorted(ABIS), default=DEFAULT_ABI)
     args = parser.parse_args()
-    prepare(args.engine, args.private_preparation_kit, args.preparation_native_stage)
+    prepare(args.engine, args.private_preparation_kit, args.preparation_native_stage, args.abi)

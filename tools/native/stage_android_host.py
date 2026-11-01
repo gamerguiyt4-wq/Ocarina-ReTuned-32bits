@@ -2,6 +2,7 @@
 """Archive only neutral Android host libraries, excluding translated title code."""
 import argparse
 from audit_neutral_shaders import verify as verify_neutral_shaders
+from android_abi import ABIS, DEFAULT_ABI, abi_settings
 from android_runtime import verify_runtime
 from audit_frontend_settings import verify as verify_frontend_settings
 import hashlib
@@ -19,7 +20,8 @@ SYSTEM_LIBRARIES = {'libc.so', 'libm.so', 'libdl.so', 'liblog.so', 'libandroid.s
     'libOpenSLES.so', 'libaaudio.so', 'libz.so'}
 
 
-def stage(engine, build, ndk, output):
+def stage(engine, build, ndk, output, abi=DEFAULT_ABI):
+    settings = abi_settings(abi)
     engine, build, ndk, output = map(lambda p: Path(p).resolve(), (engine, build, ndk, output))
     if output.exists():
         raise ValueError('Refusing to replace an existing host archive.')
@@ -32,7 +34,7 @@ def stage(engine, build, ndk, output):
         'libSDL2.so': build / '_deps/sdl2-build/libSDL2.so',
         'libTriAevum.so': build / 'product/libTriAevum.so',
         'libtriaevum_title_bootstrap.so': build / 'product/libtriaevum_title_bootstrap.so',
-        'libc++_shared.so': llvm / 'sysroot/usr/lib/aarch64-linux-android/libc++_shared.so',
+        'libc++_shared.so': llvm / 'sysroot/usr/lib' / settings['sysroot_library_directory'] / 'libc++_shared.so',
     }
     commands = subprocess.check_output(['ninja', '-C', str(build), '-t', 'commands', 'oot3d_native_game'], text=True)
     verify_runtime(sources)
@@ -43,13 +45,14 @@ def stage(engine, build, ndk, output):
     allowed = SYSTEM_LIBRARIES | set(sources)
     with tempfile.TemporaryDirectory(prefix='retuned-host-') as temporary:
         root = Path(temporary) / 'Ocarina-ReTuned-Native-Android'
-        libraries = root / 'arm64-v8a'
+        libraries = root / abi
         libraries.mkdir(parents=True)
         records = {}
         for name, source in sources.items():
             header = subprocess.check_output([str(llvm / 'bin/llvm-readelf'), '-h', str(source)], text=True)
-            if 'AArch64' not in header:
-                raise ValueError('Host library is not AArch64: ' + name)
+            machine = re.search(r'^\s*Machine:\s*(.+)$', header, re.MULTILINE)
+            if not machine or machine[1].strip() != settings['readelf_machine']:
+                raise ValueError('Host library is not ' + settings['readelf_machine'] + ': ' + name)
             dynamic = subprocess.check_output([str(llvm / 'bin/llvm-readelf'), '-d', str(source)], text=True)
             needed = set(re.findall(r'\(NEEDED\).*\[(.*?)\]', dynamic))
             if needed - allowed:
@@ -65,7 +68,7 @@ def stage(engine, build, ndk, output):
                 'sha256': hashlib.sha256(destination.read_bytes()).hexdigest(), 'needed': sorted(needed)}
         (root / 'native-host.json').write_text(json.dumps({'schema': 1,
             'runtime_revision': '17218b0cfdb944645bb5cde5249f313dca7e53ce',
-            'target': 'aarch64-linux-android', 'title_included': False, 'libraries': records}, indent=2) + '\n')
+            'target': settings['module_target'], 'abi': abi, 'title_included': False, 'libraries': records}, indent=2) + '\n')
         notices = root / 'licenses'
         notices.mkdir()
         for name in ('LICENSE_SCOPE.md', 'THIRD_PARTY_NOTICES.md'):
@@ -79,5 +82,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('engine', 'build', 'ndk', 'output'):
         parser.add_argument('--' + name, type=Path, required=True)
+    parser.add_argument('--abi', choices=sorted(ABIS), default=DEFAULT_ABI)
     args = parser.parse_args()
-    stage(args.engine, args.build, args.ndk, args.output)
+    stage(args.engine, args.build, args.ndk, args.output, args.abi)

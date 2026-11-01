@@ -191,7 +191,7 @@ class AndroidRomSetup(RomSetup):
                 'include_directories': specification['include_directories'],
                 'defines': ['OOT3D_NATIVE_GENERATED_WHOLE_AOT=1'],
                 'headers': {p.name: digest(p) for p in generated.glob('*.h')},
-                'flags': ['aarch64-linux-android29', 'c++20', '-O1', '-g0', '-fPIC',
+                'flags': [specification.get('clang_target', 'aarch64-linux-android29'), 'c++20', '-O1', '-g0', '-fPIC',
                           '-fvisibility=hidden', '-fvisibility-inlines-hidden', '-ffp-contract=off', '-fexceptions']})
 
         total_memory, available = memory_snapshot()
@@ -223,7 +223,7 @@ class AndroidRomSetup(RomSetup):
                 (restore / 'unit.o').replace(target)
                 restore.rmdir()
                 return True
-            command = [self.compiler, '--target=aarch64-linux-android29',
+            command = [self.compiler, '--target=' + specification.get('clang_target', 'aarch64-linux-android29'),
                 '--sysroot=' + str(self.asset(specification['sysroot'])),
                 '-resource-dir=' + str(self.asset(specification['resource_directory'])),
                 '-std=c++20', '-O1', '-g0', '-fPIC', '-fvisibility=hidden',
